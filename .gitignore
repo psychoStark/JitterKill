@@ -1,3 +1,26 @@
+# macOS
 .DS_Store
-.system_generated/
+.AppleDouble
+.LSOverride
+
+# Swift Package Manager & Build Artifacts
+.build/
+.swiftpm/
+*.app/
+*.dmg
+.dmg_temp/
+.AppIcon.iconset/
+
+# Temporary & Logs
 *.log
+.system_generated/
+/tmp/jitterkill*
+
+# IDE & Editor Settings
+.vscode/
+.idea/
+*.xcodeproj
+*.xcworkspace
+
+# Design File Locks
+*.af~lock~

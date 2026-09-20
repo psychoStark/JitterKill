@@ -21,7 +21,7 @@
 
 DAEMON_LABEL="com.psychostark.moonlight-optimizer"
 PLIST_PATH="/Library/LaunchDaemons/${DAEMON_LABEL}.plist"
-SCRIPT_PATH="/Users/psychostark/Documents/projects/JitterKill/jitterkill.sh"
+SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 LOG_PATH="/var/log/moonlight-optimizer.log"
 
 # Ensure script is run with sudo (except for read-only --status)
@@ -85,9 +85,9 @@ detect_streaming_mode() {
   local domain
   domain=$(ipconfig getpacket en0 2>/dev/null | awk '/domain_name \(string\):/ {print $3}')
 
-  # Dynamically detect Windows Hotspot (domain mshome.net, 192.168.137.x subnet, or nitro-5 hostname)
-  if [ "$domain" = "mshome.net" ] || [[ "$gw" =~ ^192\.168\.137\. ]] || arp -a 2>/dev/null | grep -iqE "mshome\.net|nitro"; then
-    STREAM_MODE="Windows Hotspot (Nitro-5 @ ${gw:-dynamic})"
+  # Dynamically detect Windows Hotspot (domain mshome.net or 192.168.137.x subnet)
+  if [ "$domain" = "mshome.net" ] || [[ "$gw" =~ ^192\.168\.137\. ]] || arp -a 2>/dev/null | grep -iqE "mshome\.net"; then
+    STREAM_MODE="Windows Hotspot (${gw:-dynamic})"
     MODE_TYPE="HOTSPOT"
   elif [ "$is_tailscale" -eq 1 ]; then
     if echo "$ts_status" | grep -iq "relay"; then
@@ -114,7 +114,6 @@ ORIG_AIRPLAY_RECV="0"
 ORIG_LOCATION="0"
 ORIG_DELAYED_ACK="3"
 LOC_PLIST=""
-PAUSED_PIDS=()
 OPTIMIZED_ACTIVE=0
 
 # ------------------------------------------------------------------------------
@@ -135,7 +134,6 @@ snapshot_settings() {
   fi
 
   ORIG_DELAYED_ACK=$(sysctl -n net.inet.tcp.delayed_ack 2>/dev/null || echo "3")
-  PAUSED_PIDS=()
 }
 
 # ------------------------------------------------------------------------------
@@ -176,14 +174,6 @@ apply_optimizations() {
   ifconfig awdl0 down 2>/dev/null
   ifconfig llw0 down 2>/dev/null
   ifconfig nan0 down 2>/dev/null
-
-  # Pause jitter-inducing background apps
-  for p in $(pgrep -i "localsend" 2>/dev/null); do
-    kill -STOP "$p" 2>/dev/null && PAUSED_PIDS+=("$p")
-  done
-  for p in $(pgrep -i "pock" 2>/dev/null); do
-    kill -STOP "$p" 2>/dev/null && PAUSED_PIDS+=("$p")
-  done
 
   # Boost Moonlight and Tailscale priority to real-time (-20)
   for p in $(get_moonlight_pids); do
@@ -245,14 +235,6 @@ revert_optimizations() {
 
   # Restore TCP Delayed ACK
   sysctl -w net.inet.tcp.delayed_ack="$ORIG_DELAYED_ACK" >/dev/null 2>&1
-
-  # Unpause background apps
-  if [ ${#PAUSED_PIDS[@]} -gt 0 ]; then
-    for pid in "${PAUSED_PIDS[@]}"; do
-      kill -CONT "$pid" 2>/dev/null
-    done
-    PAUSED_PIDS=()
-  fi
 
   OPTIMIZED_ACTIVE=0
   notify_user "✨ Moonlight Closed" "All network & system settings restored to normal."
@@ -346,7 +328,7 @@ status_daemon() {
   echo "=========================================================="
   if [ -f "$PLIST_PATH" ]; then
     echo " Daemon Service:  INSTALLED ($PLIST_PATH)"
-    if sudo launchctl list 2>/dev/null | grep -q "$DAEMON_LABEL" || launchctl print "system/$DAEMON_LABEL" 2>/dev/null | grep -q "state = running"; then
+    if launchctl print "system/$DAEMON_LABEL" 2>/dev/null | grep -q "state = running" || launchctl list 2>/dev/null | grep -q "$DAEMON_LABEL"; then
       echo " Daemon Status:   RUNNING in background ✅"
     else
       echo " Daemon Status:   STOPPED ⚠️ (re-run 'stream-install')"
@@ -378,12 +360,43 @@ case "$1" in
   --status)
     status_daemon
     ;;
+  --activate)
+    echo "activate" > /tmp/jitterkill.control
+    echo "✅ Optimization requested via control file."
+    exit 0
+    ;;
+  --deactivate)
+    echo "deactivate" > /tmp/jitterkill.control
+    echo "✅ Revert requested via control file."
+    exit 0
+    ;;
+  --auto)
+    rm -f /tmp/jitterkill.control
+    echo "✅ Auto-watch mode restored."
+    exit 0
+    ;;
   --watch)
     # Background Daemon loop
     trap revert_optimizations INT TERM EXIT
+    CONTROL_FILE="/tmp/jitterkill.control"
+    STATUS_FILE="/tmp/jitterkill.status"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Moonlight Optimizer Daemon started (watching for Moonlight)..."
     while true; do
-      if is_moonlight_running; then
+      ctrl=""
+      if [ -f "$CONTROL_FILE" ]; then
+        ctrl=$(head -n 1 "$CONTROL_FILE" 2>/dev/null | tr -d ' \t\r\n')
+      fi
+
+      should_optimize=0
+      if [ "$ctrl" = "activate" ]; then
+        should_optimize=1
+      elif [ "$ctrl" = "deactivate" ]; then
+        should_optimize=0
+      elif is_moonlight_running; then
+        should_optimize=1
+      fi
+
+      if [ "$should_optimize" -eq 1 ]; then
         if [ "$OPTIMIZED_ACTIVE" -eq 0 ]; then
           apply_optimizations
         else
@@ -394,6 +407,10 @@ case "$1" in
           revert_optimizations
         fi
       fi
+
+      # Write status file for non-root UI apps to read
+      echo "{\"active\":$OPTIMIZED_ACTIVE,\"mode\":\"${STREAM_MODE:-Unknown}\",\"moonlight\":$(is_moonlight_running && echo "true" || echo "false"),\"control\":\"${ctrl:-auto}\"}" > "${STATUS_FILE}.tmp" 2>/dev/null && mv -f "${STATUS_FILE}.tmp" "${STATUS_FILE}" 2>/dev/null
+
       sleep 1
     done
     ;;

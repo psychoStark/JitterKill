@@ -1,9 +1,9 @@
 # 📘 JitterKill: Deep Technical Architecture & Operational Guide
 
-**Author:** DeepMind Pair Programming Assistant & psychostark  
-**Version:** 2.0 (Universal Multi-Client & Daemon Edition)  
-**Target OS:** macOS 13+ (Ventura, Sonoma, Sequoia) & Windows 10/11  
-**Project Path:** `~/Documents/projects/JitterKill`
+**Author:** DeepMind Pair Programming Assistant & psychostark
+**Version:** 1.0 (Native Swift GUI, LaunchDaemon, IPC & Multi-Client Edition)
+**Target OS:** macOS 14+ (Sonoma, Sequoia) & Windows 10/11
+**Project Path:** `/Users/psychostark/Documents/Projects/JitterKill`
 
 ---
 
@@ -15,40 +15,44 @@
    - [2.2 The macOS P2P Stack (`awdl0`, `llw0`, `nan0`)](#22-the-macos-p2p-stack-awdl0-llw0-nan0)
    - [2.3 Why Existing AWDL Tools Failed (The `llw0` Blind Spot)](#23-why-existing-awdl-tools-failed-the-llw0-blind-spot)
    - [2.4 The Windows Host WLAN AutoConfig Scanning Bug](#24-the-windows-host-wlan-autoconfig-scanning-bug)
-3. [JitterKill System Architecture](#3-jitterkill-system-architecture)
-   - [3.1 High-Level Flowchart](#31-high-level-flowchart)
-   - [3.2 Dual-Mode Engine (Daemon vs. Interactive)](#32-dual-mode-engine-daemon-vs-interactive)
-   - [3.3 Multi-Client Detection Engine](#33-multi-client-detection-engine)
-   - [3.4 Adaptive Network Topology Detection](#34-adaptive-network-topology-detection)
+   - [2.5 System Requirements & Hardware Compatibility](#25-system-requirements--hardware-compatibility)
+3. [JitterKill System Architecture (v1.0)](#3-jitterkill-system-architecture-v10)
+   - [3.1 High-Level Component Diagram](#31-high-level-component-diagram)
+   - [3.2 The Privilege-Separated IPC Pipeline](#32-the-privilege-separated-ipc-pipeline)
+   - [3.3 Native macOS Application (Dock, Menu Bar, Dashboard)](#33-native-macos-application-dock-menu-bar-dashboard)
+   - [3.4 Process Detection: Eliminating the Observer Effect](#34-process-detection-eliminating-the-observer-effect)
+   - [3.5 Installed-Only App Detection & Custom Rules](#35-installed-only-app-detection--custom-rules)
+   - [3.6 Tailscale Active-Connection State Filter](#36-tailscale-active-connection-state-filter)
 4. [Deep Dive: Every System Modification Explained](#4-deep-dive-every-system-modification-explained)
    - [4.1 Wi-Fi Interface Lockdown (`awdl0`, `llw0`, `nan0`)](#41-wi-fi-interface-lockdown-awdl0-llw0-nan0)
    - [4.2 Apple Continuity & Discovery Silencing](#42-apple-continuity--discovery-silencing)
    - [4.3 Location Services Suppression](#43-location-services-suppression)
    - [4.4 Darwin Kernel TCP Low-Latency Tuning (`delayed_ack=0`)](#44-darwin-kernel-tcp-low-latency-tuning-delayed_ack0)
    - [4.5 Process Scheduling Elevation (`renice -20`)](#45-process-scheduling-elevation-renice--20)
-   - [4.6 Non-Destructive App Jitter Freezing (`SIGSTOP` / `SIGCONT`)](#46-non-destructive-app-jitter-freezing-sigstop--sigcont)
-5. [Tailscale Mesh & Remote Streaming Dynamics](#5-tailscale-mesh--remote-streaming-dynamics)
-   - [5.1 Direct P2P UDP Hole-Punching vs. DERP Relay](#51-direct-p2p-udp-hole-punching-vs-derp-relay)
-   - [5.2 WireGuard MTU & UDP Packet Fragmentation](#52-wireguard-mtu--udp-packet-fragmentation)
-6. [Windows Host Optimization (Acer Nitro 5)](#6-windows-host-optimization-acer-nitro-5)
-   - [6.1 The 60-Second Cadence Explained](#61-the-60-second-cadence-explained)
-   - [6.2 Batch Script Mechanics](#62-batch-script-mechanics)
-7. [State Preservation & Failproof Rollback Guarantee](#7-state-preservation--failproof-rollback-guarantee)
-8. [CLI Command Reference & Quick Cheatsheet](#8-cli-command-reference--quick-cheatsheet)
+5. [DNS & Game Streaming Server Latency Benchmarking](#5-dns--game-streaming-server-latency-benchmarking)
+   - [5.1 Global Public DNS Resolvers](#51-global-public-dns-resolvers)
+   - [5.2 Gaming Ecosystem APIs](#52-gaming-ecosystem-apis)
+   - [5.3 Global GeForce NOW Edge Servers](#53-global-geforce-now-edge-servers)
+   - [5.4 Custom Host Addition, Deletion & Persistence](#54-custom-host-addition-deletion--persistence)
+6. [Tailscale Mesh & Remote Streaming Dynamics](#6-tailscale-mesh--remote-streaming-dynamics)
+   - [6.1 Direct P2P UDP Hole-Punching vs. DERP Relay](#61-direct-p2p-udp-hole-punching-vs-derp-relay)
+   - [6.2 WireGuard MTU & UDP Packet Fragmentation](#62-wireguard-mtu--udp-packet-fragmentation)
+7. [Windows Host Optimization](#7-windows-host-optimization)
+8. [CLI Command Reference & Operational Guide](#8-cli-command-reference--operational-guide)
 
 ---
 
 ## 1. Executive Summary & Problem Statement
 
-Game streaming applications such as **Moonlight**, **Sunshine**, and **Parsec** demand steady transmission of 60 to 120 unbuffered video frames per second. At 60 FPS, a new frame must be captured, encoded, transmitted over the network, decoded, and rendered on screen every **16.6 milliseconds**. At 120 FPS, this window shrinks to **8.3 milliseconds**.
+Game streaming applications such as **Moonlight**, **Sunshine**, **GeForce NOW**, **Steam Link**, and **Parsec** demand steady transmission of 60 to 120 unbuffered video frames per second. At 60 FPS, a new frame must be captured, encoded, transmitted over the network, decoded, and rendered on screen every **16.6 milliseconds**. At 120 FPS, this window shrinks to **8.3 milliseconds**.
 
-Standard consumer operating systems are not configured for real-time deadlines. By default:
+Standard consumer operating systems are not configured for real-time deadlines:
 * **macOS** periodically commands the physical Wi-Fi chip to hop off the connected Wi-Fi channel onto discovery channels (Channels 6, 44, and 149) to probe for nearby Apple devices (AirDrop, AirPlay, Apple Watch auto-unlock, Universal Control, and Sidecar).
 * **Windows** periodically commands its Wi-Fi adapter to scan all 2.4 GHz and 5 GHz channels every 60 seconds via `WlanSvc` (WLAN AutoConfig), causing the Mobile Hotspot radio to momentarily cut communication with connected clients.
 
 When the Wi-Fi radio is off-channel, packets cannot be acknowledged. The sender's TCP/UDP buffers overflow, dozens of retransmissions are attempted, and once the radio hops back, a burst of delayed packets arrives at once. In Moonlight, this manifests as **micro-stutter, frozen frames, audio crackling, and ping spikes between 100 ms and 300 ms**.
 
-**JitterKill** is an automated low-level system daemon and optimization suite that neutralizes every source of periodic Wi-Fi interference on macOS and Windows, maintaining zero packet loss and a flat latency profile.
+**JitterKill** is an automated low-level system daemon, CLI utility, and native macOS application that neutralizes every source of periodic Wi-Fi interference on macOS and Windows, maintaining zero packet loss and a flat latency profile.
 
 ---
 
@@ -56,14 +60,14 @@ When the Wi-Fi radio is off-channel, packets cannot be acknowledged. The sender'
 
 ### 2.1 Real-Time Streaming vs. Buffered Traffic
 
-Users frequently report: *"My phone, YouTube, and Netflix work flawlessly without any lag spikes, but Moonlight constantly stutters. Why?"*
+Users frequently ask: *"My phone, YouTube, and Netflix work flawlessly without any lag spikes, but Moonlight constantly stutters. Why?"*
 
 ```text
 [Buffered Traffic (YouTube / Netflix / Web)]
 Client  |=====[ 10-Second Buffer Ready ]=====> Playback is completely smooth
 Network |-- 200ms Wi-Fi Scan Dropout --|     (Dropout absorbed by buffer)
 
-[Real-Time Streaming (Moonlight / Sunshine)]
+[Real-Time Streaming (Moonlight / Sunshine / GeForce NOW)]
 Client  |[Frame 1] -> [Frame 2] -> [Frame 3] -> [Frame 4 (DROPPED)] -> STUTTER!
 Network |-- 200ms Wi-Fi Scan Dropout --|     (No buffer; instant lag spike)
 ```
@@ -92,158 +96,126 @@ Popular community solutions such as `AWDLControl.app`, `Ping Warden`, and Moonli
 ifconfig awdl0 down
 ```
 
-#### What our system telemetry proved:
 When we audited the system binaries of `AWDLControlHelper` and `PingWardenHelper` using string symbol extraction:
 ```text
 $ strings /Applications/Ping\ Warden.app/Contents/MacOS/PingWardenHelper | grep -iE 'awdl|llw'
 Brought awdl0 DOWN
 Brought awdl0 UP
-awdl0
 ```
-
-Neither application contains any reference to **`llw0`** or **`nan0`**. While `awdl0` was brought down:
-```text
-$ ifconfig llw0
-llw0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
-      ether 66:9b:e2:08:3f:1b
-```
-`llw0` was **UP and RUNNING**. Furthermore, in the macOS system log, the Apple daemon `wifip2pd` was recorded actively updating `llw0`:
-```text
-wifip2pd[602]: [com.apple.awdl:interface] Updated WiFiInterface<P2PController<AppleIO80211Driver>>[llw0]
-```
-This single event triggered the exact "Protection Event" logged by Ping Warden and forced the Wi-Fi radio off-channel.
-
-**JitterKill fixes this by taking down and continuously pinning `awdl0`, `llw0`, and `nan0` simultaneously.**
+Existing tools completely ignore `llw0` and `nan0`. While `awdl0` was down, the Skywalk driver kept `llw0` alive, and `wifip2pd` continued commanding off-channel scans. **JitterKill simultaneously disables and holds down `awdl0`, `llw0`, and `nan0`.**
 
 ---
 
-### 2.4 The Windows Host WLAN AutoConfig Scanning Bug
+### 2.5 System Requirements
 
-When connecting a Mac to a Windows Mobile Hotspot (hosted on an Acer Nitro 5 or any Windows 10/11 laptop), the Windows laptop's Wi-Fi adapter operates in a hybrid **Station + SoftAP mode**.
-
-Windows runs a core background service called **WLAN AutoConfig (`WlanSvc`)**. Every 60 seconds by default, `WlanSvc` commands the Wi-Fi card to perform an active background scan across all frequencies to see if known Wi-Fi networks have better signal.
-
-While the Windows Wi-Fi adapter is hopping frequencies, its **Mobile Hotspot radio cannot transmit or receive**. On the Mac side, the Wi-Fi driver logs at that exact second:
-```text
-airportd: Driver Event: APPLE80211_M_RSSI_CHANGED/39 (en0)
-airportd: LQM: txFwFrames=81 txFwFail=71 txFwRetrans=445
-```
-Out of 81 frames sent by the Mac, 71 failed, and 445 retransmissions occurred because the Windows hotspot was off-channel.
-
-Disabling `WlanSvc` background scanning on the Windows host stops the 60-second stall completely:
-```cmd
-netsh wlan set autoconfig enabled=no interface="Wi-Fi"
-```
+* **macOS 14+** (Sonoma, Sequoia, or newer).
+* **Architecture:** Apple Silicon (`arm64`) or Intel 64-bit (`x86_64`). Universal 2 packages run natively on both.
+* **Network:** Wi-Fi (`en0`) or Ethernet.
+* **Permissions:** Administrator privileges required once during setup to install the background LaunchDaemon in `/Library/LaunchDaemons/`. Subsequent optimizations require zero password prompts.
+* **Gatekeeper / Quarantine:** If macOS quarantine flags the downloaded app as damaged, run `chmod +x /Applications/JitterKill.app/Contents/MacOS/JitterKill` and `xattr -cr /Applications/JitterKill.app`.
 
 ---
 
-## 3. JitterKill System Architecture
+## 3. JitterKill System Architecture (v1.0)
 
-### 3.1 High-Level Flowchart
+### 3.1 High-Level Component Diagram
 
-```mermaid
-flowchart TD
-    subgraph Trigger["Process Monitoring"]
-        A["User Launches Moonlight<br>(Standard / Legacy / V+)"] --> B["JitterKill Detection Engine<br>(pgrep -x Moonlight)"]
-    end
-
-    subgraph Analysis["Pre-Flight State Analysis"]
-        B --> C["Snapshot Original System State<br>(AirDrop, Handoff, Location, TCP sysctl)"]
-        C --> D["Adaptive Network Audit<br>(Hotspot vs Tailscale Direct/DERP vs LAN)"]
-    end
-
-    subgraph Lockdown["Lockdown & Optimization Phase"]
-        D --> E["Bring Down awdl0, llw0, nan0"]
-        E --> F["Silence AirDrop, Handoff, Universal Control, AirPlay"]
-        F --> G["Silence Location Services (locationd)"]
-        G --> H["Apply Darwin Kernel TCP Tuning<br>(net.inet.tcp.delayed_ack = 0)"]
-        H --> I["Freeze Jitter Apps via SIGSTOP<br>(LocalSend, Pock)"]
-        I --> J["Elevate Process Priorities<br>(renice -20 for Moonlight & Tailscale)"]
-        J --> K["Post Desktop Notification"]
-    end
-
-    subgraph Loop["Active Enforcement Loop"]
-        K --> L["Keep awdl0, llw0, nan0 DOWN<br>(Block wifip2pd resurrection)"]
-        L --> M{"Is Moonlight Still Running?"}
-        M -- Yes --> L
-        M -- No --> N["Rollback & Restoration Phase"]
-    end
-
-    subgraph Rollback["Clean State Restoration"]
-        N --> O["Re-enable awdl0, llw0, nan0 UP"]
-        O --> P["Restore AirDrop, Handoff, Location, Universal Control"]
-        P --> Q["Restore net.inet.tcp.delayed_ack to Original"]
-        Q --> R["Thaw Paused Apps via SIGCONT<br>(LocalSend, Pock)"]
-        R --> S["Post Cleanup Notification & Return to Standby"]
-    end
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                        macOS Desktop Environment                       │
+│                                                                        │
+│   ┌─────────────────────┐   ┌──────────────────────────────────────┐   │
+│   │   macOS Dock Icon   │   │  macOS Application Menu Bar (Top)    │   │
+│   │   (Click to Open)   │   │  (JitterKill, File, Optimize, etc.)  │   │
+│   └──────────┬──────────┘   └──────────────────┬───────────────────┘   │
+│              │                                 │                       │
+│   ┌──────────▼─────────────────────────────────▼───────────────────┐   │
+│   │                     JitterKill.app (SwiftUI)                   │   │
+│   │   • Liquid Glass Dashboard (Latency, Jitter, Packet Quality)   │   │
+│   │   • Menu Bar Companion Popover & Status Icon                   │   │
+│   │   • Installed Streaming App Scanner & Rules Manager            │   │
+│   │   • DNS & GeForce NOW Edge Server Benchmarking Engine          │   │
+│   └──────────────────────────────┬─────────────────────────────────┘   │
+└──────────────────────────────────┼─────────────────────────────────────┘
+                                   │ IPC (File-based, zero authentication)
+┌──────────────────────────────────▼─────────────────────────────────────┐
+│    LaunchDaemon Helper: /usr/local/bin/jitterkill-helper (Root)        │
+│    Service: com.psychostark.jitterkill.helper                          │
+├────────────────────────────────────────────────────────────────────────┤
+│  • Control FIFO/File:   /tmp/jitterkill.control                        │
+│  • Status JSON State:   /tmp/jitterkill.status                         │
+│  • App Rules Storage:   /Library/Application Support/JitterKill/apps.json│
+│  • Execution Loop:      250ms polling cycle with 1.0s idle debounce    │
+│  • Process Detection:   Safe exact kernel matching (pgrep -x)          │
+│  • Kernel Enforcement:  ifconfig awdl0/llw0/nan0 down, delayed_ack = 0 │
+└──────────────────────────────────┬─────────────────────────────────────┘
+                                   │
+┌──────────────────────────────────▼─────────────────────────────────────┐
+│       CLI Executable: /usr/local/bin/jitterkill (User & Scripts)       │
+│       Usage: jitterkill on | off | auto | apps | status | app          │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-### 3.2 Dual-Mode Engine (Daemon vs. Interactive)
+### 3.2 The Privilege-Separated IPC Pipeline
 
-JitterKill provides two operational modes:
+Previous iterations required running `sudo ./jitterkill.sh` or prompted for Touch ID / administrative passwords on every state change. 
 
-#### 1. Background Daemon (`--watch` / `stream-install`)
-* Runs as a native macOS `LaunchDaemon` (`/Library/LaunchDaemons/com.psychostark.moonlight-optimizer.plist`).
-* Starts automatically at system boot with root privileges.
-* Sleeps at **0.0% CPU usage**, polling process lists once per second.
-* Automatically triggers optimizations when Moonlight opens and cleanly reverts when Moonlight quits.
-* Requires **zero terminal interaction**.
-
-#### 2. Interactive CLI Mode (`stream-mode` / `jitterkill`)
-* Runs in a foreground Terminal window with live diagnostics.
-* Displays detected network topology, Tailscale audit results, and snapshot details.
-* Reverts all system settings cleanly when the user presses `Ctrl + C`.
+In v3.0, JitterKill uses a privilege-separated architecture:
+1. **Background LaunchDaemon (`jitterkill-helper`):** Runs as `root` managed by `launchd`. It holds the necessary privileges to manage Skywalk networking interfaces, toggle `sysctl net.inet.tcp.delayed_ack`, and execute `renice -20`.
+2. **Control Channel (`/tmp/jitterkill.control`):** Standard user processes (the GUI app or CLI) write non-blocking atomic commands:
+   - `activate`: Force immediate lockdown.
+   - `deactivate`: Force immediate restore to standard defaults.
+   - `auto`: Return to dynamic streaming application detection.
+   - `update` / `reload`: Triggers an in-place daemon hot-reload without interrupting system operations.
+3. **Status Channel (`/tmp/jitterkill.status`):** The daemon writes a JSON state representation every 250ms containing interface states, delayed ACK values, active trigger applications, and detected streaming modes.
 
 ---
 
-### 3.3 Multi-Client Detection Engine
+### 3.3 Native macOS Application (Dock, Menu Bar, Dashboard)
 
-JitterKill natively supports all three Moonlight variants installed on the Mac:
-
-| Variant | App Path | Bundle Identifier | Process Name |
-| :--- | :--- | :--- | :--- |
-| **Official Moonlight** | `/Applications/Moonlight.app` | `std.skyhua.MoonlightMac` | `Moonlight` |
-| **Moonlight Legacy** | `/Applications/Moonlight Legacy.app` | `com.moonlight-stream.Moonlight` | `Moonlight` |
-| **Moonlight V+** | `/Applications/Moonlight V+.app` | `com.alkaidlab.vpluspc` | `Moonlight` |
-
-The detection engine uses exact binary matching:
-```bash
-is_moonlight_running() {
-  pgrep -x "Moonlight" >/dev/null 2>&1 || \
-  pgrep -f "Contents/MacOS/Moonlight" >/dev/null 2>&1
-}
-```
-This prevents false positives from background privileged helper daemons while capturing any of the three GUI clients.
+JitterKill is a full, first-class macOS application (`LSUIElement: false`):
+* **Dock Icon:** Fully visible in the macOS Dock and Cmd+Tab application switcher. Clicking the Dock icon brings the JitterKill Dashboard to the front.
+* **macOS Application Menu Bar:** Standard system menu bar at the top of your screen:
+  - **JitterKill:** About JitterKill, Preferences (Cmd+,), Hide (Cmd+H), Quit (Cmd+Q).
+  - **File:** Open Dashboard (Cmd+D), Close Window (Cmd+W).
+  - **Optimization:** Activate Lockdown (Cmd+O), Deactivate (Cmd+Shift+O), Auto Mode (Cmd+A), Scan Installed Apps (Cmd+R).
+  - **Window:** Minimize (Cmd+M), Zoom, Bring All to Front.
+  - **Help:** JitterKill Technical Documentation.
+* **Menu Bar Companion Item:** An unobtrusive status bar icon in the top right provides real-time latency readout and quick controls via a Liquid Glass popover.
 
 ---
 
-### 3.4 Adaptive Network Topology Detection
+### 3.4 Process Detection: Eliminating the Observer Effect
 
-JitterKill dynamically identifies the network path:
+In earlier builds, the Swift UI periodically ran `/bin/bash -c 'pgrep -f "Contents/MacOS/<app>"'` to check for running applications. Because `pgrep -f` matches against the entire command-line argument list of all running processes, the background LaunchDaemon was matching the transient `bash` subshell that JitterKill itself was executing! This produced false-positive "split-second" triggers for apps that were not even installed.
 
-```bash
-# 1. Inspect default routing gateway
-gw=$(route -n get default 2>/dev/null | awk '/gateway:/ {print $2}')
+**The Solution in v3.0:**
+1. **In the GUI App (`NetworkStatusMonitor`):** Replaced all shell probes with native Cocoa `NSWorkspace.shared.runningApplications`. This queries LaunchServices in memory with zero subshells, 100% accuracy, and 0.1 ms execution time.
+2. **In the Daemon (`jitterkill-helper`):** Replaced `pgrep -f` with exact process name matching (`pgrep -x "$p"`), and explicitly filtered out shell processes (`bash`, `zsh`, `sh`, `python`, `grep`, `pgrep`) and system daemons.
+3. **Debounce Protection:** Added a 4-cycle (~1 second) idle debounce so that momentary process restarts or pauses do not cause deactivation/activation flapping.
 
-# 2. Inspect DHCP domain payload from Wi-Fi interface
-domain=$(ipconfig getpacket en0 2>/dev/null | awk '/domain_name \(string\):/ {print $3}')
+---
 
-# 3. Match topology
-if [ "$domain" = "mshome.net" ] || [[ "$gw" =~ ^192\.168\.137\. ]] || arp -a 2>/dev/null | grep -iqE "mshome\.net|nitro"; then
-  STREAM_MODE="Windows Hotspot (Nitro-5 @ ${gw:-dynamic})"
-elif [ "$is_tailscale" -eq 1 ]; then
-  # Evaluate Tailscale peer connectivity
-  if echo "$ts_status" | grep -iq "relay"; then
-    STREAM_MODE="Tailscale (⚠️ DERP Relay Detected)"
-  else
-    STREAM_MODE="Tailscale (✅ Direct P2P)"
-  fi
-else
-  STREAM_MODE="Local Wi-Fi / LAN (${gw:-gateway})"
-fi
-```
+### 3.5 Installed-Only App Detection & Custom Rules
+
+Rather than overwhelming the user with a hardcoded list of unsupported or uninstalled applications, JitterKill dynamically inspects LaunchServices bundle identifiers and standard macOS application directories (`/Applications`, `~/Applications`):
+* **Auto-Detection:** Automatically discovers installed streaming clients (Moonlight, Moonlight Legacy, Moonlight V+, GeForce NOW, Steam, Parsec, Chiaki, etc.).
+* **Sanitized Storage:** Only apps that are physically installed on your disk are populated into `/Library/Application Support/JitterKill/apps.json`.
+* **Scan Installed Button:** A dedicated button (`sparkle.magnifyingglass`) in both Dashboard and Settings rescans the disk whenever new streaming applications are installed.
+* **Custom App Support:** Users can add any custom application via file picker (`+ Add App…`) or command-line process name (`+ Add Process…`), and remove any rule at any time.
+
+---
+
+### 3.6 Tailscale Active-Connection State Filter
+
+Tailscale runs `IPNExtension` 24/7 as a background macOS network extension even when Tailscale is stopped or disconnected. 
+
+In v3.0, both the daemon and the GUI inspect `/Applications/Tailscale.app/Contents/MacOS/Tailscale status`:
+* When Tailscale reports **"Tailscale is stopped."**, `IPNExtension` is treated as offline.
+* Tailscale shows `Standby 💤` in the rules list and does not trigger priority boosting or auto-activation.
+* Tailscale only activates and appears in Active Game Streaming Processes when there is an **active Tailscale connection**.
 
 ---
 
@@ -251,186 +223,129 @@ fi
 
 ### 4.1 Wi-Fi Interface Lockdown (`awdl0`, `llw0`, `nan0`)
 * **Commands:** `ifconfig awdl0 down`, `ifconfig llw0 down`, `ifconfig nan0 down`
-* **Technical Mechanism:** Drops the link state of Apple's peer-to-peer virtual interfaces.
-* **Why Continuous Enforcement Is Required:** The macOS daemon `wifip2pd` monitors network routes and will periodically attempt to resurrect `llw0` if an Apple device advertises nearby. JitterKill runs a 1-second enforcement loop to block re-awakening.
+* **Mechanism:** Drops the link state of Apple's peer-to-peer virtual interfaces.
+* **Why Continuous Enforcement Is Required:** The macOS daemon `wifip2pd` monitors network routes and will periodically attempt to resurrect `llw0` if an Apple device advertises nearby. JitterKill enforces down state every cycle during active sessions.
 * **Effect:** The physical Wi-Fi radio on `en0` remains locked to your router or hotspot channel 100% of the time. Zero channel hopping.
 
 ---
 
 ### 4.2 Apple Continuity & Discovery Silencing
 * **AirDrop:** `defaults write com.apple.sharingd DiscoverableMode -string "Off"`
-  Stops `sharingd` from broadcasting or listening for AirDrop discovery hashes.
-* **Handoff:** 
-  ```bash
-  defaults -currentHost write com.apple.coreservices.useractivityd ActivityAdvertisingAllowed -bool false
-  defaults -currentHost write com.apple.coreservices.useractivityd ActivityReceivingAllowed -bool false
-  ```
-  Halts clipboard sharing and app handoff scans across iCloud devices.
-* **Universal Control:** `defaults -currentHost write com.apple.universalcontrol Disable -bool true`
-  Stops the Mac from broadcasting pointer coordinates to nearby iPads and Macs.
-* **AirPlay Receiver:** `defaults -currentHost write com.apple.controlcenter "AirplayReciever" -bool false`
-  Disables mDNS/Bonjour advertisement of AirPlay display reception.
+* **Handoff:** Disables `ActivityAdvertisingAllowed` and `ActivityReceivingAllowed` in `com.apple.coreservices.useractivityd`.
+* **Universal Control:** Sets `Disable -bool true` in `com.apple.universalcontrol`.
+* **AirPlay Receiver:** Disables `AirplayReciever` in `com.apple.controlcenter`.
 
 ---
 
 ### 4.3 Location Services Suppression
 * **Target Plist:** `/var/db/locationd/Library/Preferences/ByHost/com.apple.locationd.*.plist`
 * **Setting:** `LocationServicesEnabled = 0`
-* **Mechanism:** When active, `locationd` conducts off-channel Wi-Fi scans to capture BSSIDs of nearby routers to compute geolocation. Disabling it stops `locationd` from requesting scan batches from `airportd`.
+* **Mechanism:** Stops `locationd` from ordering off-channel BSSID scans from `airportd`.
 
 ---
 
 ### 4.4 Darwin Kernel TCP Low-Latency Tuning (`delayed_ack=0`)
 * **Sysctl Parameter:** `net.inet.tcp.delayed_ack`
-* **Default Value:** `3` (Waits up to 100 ms to aggregate TCP acknowledgments)
+* **Default Value:** `3` (Aggregates TCP ACKs with up to 100 ms delay)
 * **Optimized Value:** `0` (Sends TCP ACKs immediately upon packet reception)
-* **Effect:** While the raw video stream runs over UDP, Moonlight's control protocol, RTSP session management, input polling feedback, and Tailscale handshake channels operate over TCP. Setting `delayed_ack=0` eliminates up to 100 ms of control latency.
+* **Effect:** Eliminates up to 100 ms of control latency in RTSP session management, game controller input feedback, and Tailscale WireGuard handshakes.
 
 ---
 
 ### 4.5 Process Scheduling Elevation (`renice -20`)
 * **Command:** `renice -20 -p <PID>`
-* **Mechanism:** In the Darwin XNU Mach kernel scheduler, a nice value of `-20` provides the highest scheduling priority available in user space.
-* **Effect:** When video frames arrive, Moonlight and the Tailscale tunnel daemons are prioritized over background system daemons, eliminating CPU scheduling jitter.
+* **Mechanism:** Grants the streaming client the highest real-time CPU scheduling priority available in the Darwin Mach kernel scheduler, eliminating CPU scheduling jitter.
 
 ---
 
-### 4.6 Non-Destructive App Jitter Freezing (`SIGSTOP` / `SIGCONT`)
-Instead of forcibly killing background applications that cause network traffic, JitterKill freezes their execution threads using POSIX process control:
+## 5. DNS & Game Streaming Server Latency Benchmarking
 
-```bash
-# Freeze on stream start
-kill -STOP $PID
+JitterKill features a concurrent, non-blocking TCP latency benchmark engine (`DNSBenchmarkEngine.swift`) that tests candidate endpoints and ranks them by average latency, jitter, and success rate.
 
-# Thaw on stream end
-kill -CONT $PID
-```
+### 5.1 Global Public DNS Resolvers
+1. **Cloudflare DNS:** `1.1.1.1:53` (Primary), `1.0.0.1:53` (Secondary)
+2. **Google DNS:** `8.8.8.8:53` (Primary), `8.8.4.4:53` (Secondary)
+3. **Quad9 DNS:** `9.9.9.9:53` (Primary), `149.112.112.112:53` (Secondary)
+4. **OpenDNS:** `208.67.222.222:53` (Primary), `208.67.220.220:53` (Secondary)
+5. **AdGuard DNS:** `94.140.14.14:53` (Primary), `94.140.15.15:53` (Secondary)
+6. **CleanBrowsing DNS:** `185.228.168.9:53` (Primary), `185.228.169.9:53` (Secondary)
 
-* **LocalSend (`org.localsend.localsendApp`):** LocalSend constantly broadcasts UDP packets on port 53317 for local device discovery. Freezing it eliminates multicast packet contention.
-* **Pock (`com.pigigaldi.pock`):** The Touch Bar utility issues `GET RSSI` queries to `airportd` every second. Freezing it prevents airportd status queries during gameplay.
-* **Result:** Both applications remain in RAM with window state intact, instantly resuming when Moonlight exits.
+### 5.2 Gaming Ecosystem APIs
+* **Valve Steam API:** `api.steampowered.com:443`
+* **Battle.net API:** `us.battle.net:443`
+* **GeForce NOW Routing API:** `prod.cloudmatchbeta.nvidiagrid.net:443`
+
+### 5.3 Global GeForce NOW Edge Servers
+JitterKill includes 64+ edge server clusters across Europe, North America, and Asia:
+* **Europe:** Amsterdam (`NP-AMS-01`..`08`), London (`NP-LON-01`..`08`), Frankfurt (`NP-FRK-02`..`08`), Paris (`NP-PAR-01`..`07`), Stockholm (`NP-STH-01`..`04`), Warsaw (`NP-WAW-01`), Sofia (`NP-SOF-02`).
+* **North America:** Ashburn (`NP-ASH-02`..`04`), Atlanta (`NP-ATL-01`..`04`), Chicago (`NP-CHI-01`..`05`), Dallas (`NP-DAL-01`..`06`), Los Angeles (`NP-LAX-01`..`03`), Miami (`NP-MIA-01`..`04`), Newark (`NP-NWK-01`..`04`), Portland (`NP-PDX-01`), Phoenix (`NP-PHX-02`), Seattle (`NP-SEA-01`), Montreal (`NP-MON-02`), Toronto (`NP-YYZ-01`).
+* **Asia-Pacific:** Mumbai (`NP-BOM-01`), Tokyo (`NP-TYO-01`).
+
+### 5.4 Custom Host Addition, Deletion & Persistence
+* Users can add any custom host or IP on any port via the **Add Custom Host** form.
+* Custom hosts can be removed at any time using the red **trash button**.
+* Custom hosts and the currently active target selection are automatically persisted across reboots in `UserDefaults`.
 
 ---
 
-## 5. Tailscale Mesh & Remote Streaming Dynamics
+## 6. Tailscale Mesh & Remote Streaming Dynamics
 
-### 5.1 Direct P2P UDP Hole-Punching vs. DERP Relay
-
-Tailscale connects your Mac to your host PC using WireGuard encrypted tunnels.
+### 6.1 Direct P2P UDP Hole-Punching vs. DERP Relay
 
 ```text
 [Direct Connection (Optimal)]
-MacBook (Client) <========== Direct UDP Tunnel (P2P) ==========> Nitro-5 (Host)
+Client <========== Direct UDP Tunnel (P2P) ==========> Host PC
 Latency: 15–30 ms | Bandwidth: Uncapped (Full Line Rate)
 
 [DERP Relayed Connection (Bottleneck)]
-MacBook <--- Encrypted TLS ---> [ DERP Relay Server ] <--- Encrypted TLS ---> Nitro-5
+Client <--- Encrypted TLS ---> [ DERP Relay Server ] <--- Encrypted TLS ---> Host PC
 Latency: 50–120 ms | Bandwidth: Capped / Shared | High Jitter & Packet Drops
 ```
 
-If your home router where the Nitro-5 is located has symmetric NAT or blocks inbound UDP traffic, Tailscale routes packets through an intermediate **DERP (Designated Encrypted Relay for Packets)** server. 
-
 JitterKill inspects the output of `/Applications/Tailscale.app/Contents/MacOS/Tailscale status`:
 * If it detects a `relay` state, it immediately fires a warning notification alerting you that high latency and packet loss are due to DERP relaying.
-* **Fix:** Enable **UPnP** on the router hosting the Nitro-5, or configure a port forward for UDP port **`41641`**.
+* **Fix:** Enable **UPnP** on the router hosting the host PC, or configure a port forward for UDP port **`41641`**.
 
 ---
 
-### 5.2 WireGuard MTU & UDP Packet Fragmentation
+### 6.2 WireGuard MTU & UDP Packet Fragmentation
 
 The standard Ethernet MTU is **1500 bytes**. Because Tailscale wraps every packet inside an outer WireGuard IP/UDP header, the internal Tailscale virtual interface MTU is **1280 bytes**.
-
 * If Moonlight transmits a 1400-byte video packet, the network stack must fragment it into two IP packets (1280 bytes + 120 bytes).
 * If either packet fragment is lost in transit, the entire video frame is lost.
 * **Recommendation in Moonlight Settings:** Set stream bitrates within reasonable upload limits (e.g. 20–35 Mbps for 1080p/60-120fps) and enable **"Frame Pacing: Smooth Video"**.
 
 ---
 
-## 6. Windows Host Optimization (Acer Nitro 5)
+## 7. Windows Host Optimization
 
-### 6.1 The 60-Second Cadence Explained
-
-On the host laptop (Acer Nitro 5), when Windows Mobile Hotspot is enabled:
+On the host machine, when Windows Mobile Hotspot is enabled:
 1. The host Wi-Fi card broadcasts the SSID on Channel 149.
 2. Every 60 seconds (at the `:31` second mark observed in telemetry), Windows WLAN AutoConfig scans other channels.
-3. During this 200 ms scan, the hotspot ceases transmission, causing 400+ packet retransmissions on the MacBook.
+3. During this 200 ms scan, the hotspot ceases transmission, causing 400+ packet retransmissions on the client.
+
+Two helper scripts are located in `windows-host/`:
+* **`disable_wlan_scan.bat`:** Run as administrator before hosting hotspot. Stops `WlanSvc` scan timer.
+* **`enable_wlan_scan.bat`:** Run as administrator after gaming to restore normal Wi-Fi scanning.
 
 ---
 
-### 6.2 Batch Script Mechanics
+## 8. CLI Command Reference & Operational Guide
 
-Two helper scripts are located in `~/Documents/projects/JitterKill/windows-host/`:
+The CLI executable is installed at `/usr/local/bin/jitterkill`:
 
-#### `disable_wlan_scan.bat`
-```cmd
-@echo off
-net session >nul 2>&1 || (echo [!] Run as administrator & pause & exit /b 1)
-netsh wlan set autoconfig enabled=no interface="Wi-Fi"
-echo [✓] Windows Wi-Fi background scan is OFF. Hotspot latency locked.
-pause
-```
-*Disables the scan timer on interface "Wi-Fi". Run this before hosting the hotspot or starting your gaming session.*
-
-#### `enable_wlan_scan.bat`
-```cmd
-@echo off
-net session >nul 2>&1 || (echo [!] Run as administrator & pause & exit /b 1)
-netsh wlan set autoconfig enabled=yes interface="Wi-Fi"
-echo [✓] Windows Wi-Fi scanning restored.
-pause
-```
-*Restores normal scanning when you need to search for and connect to other Wi-Fi networks.*
-
----
-
-## 7. State Preservation & Failproof Rollback Guarantee
-
-A primary design requirement of JitterKill is that **no system setting is permanently overwritten**.
-
-### Restoration Sequence
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor User
-    participant Script as JitterKill Engine
-    participant System as macOS System Subsystems
-    participant Apps as Paused Apps (LocalSend/Pock)
-
-    User->>Script: Launches Moonlight
-    Script->>System: Read & Snapshot Original Values
-    Script->>System: Apply Zero-Latency Lockdown
-    Script->>Apps: kill -STOP (Freeze Background Multicast)
-    Note over Script,System: Active Streaming Session (awdl0/llw0/nan0 pinned DOWN)
-    User->>Script: Quits Moonlight (or Ctrl+C)
-    Script->>System: ifconfig awdl0 up, llw0 up, nan0 up
-    Script->>System: Restore AirDrop, Handoff, Universal Control, AirPlay
-    Script->>System: Restore LocationServicesEnabled
-    Script->>System: sysctl net.inet.tcp.delayed_ack = original
-    Script->>Apps: kill -CONT (Resume Background Apps)
-    Script->>User: Desktop Banner: "All Settings Restored"
-```
-
-1. **Signal Interception:** JitterKill traps `SIGINT` (`Ctrl+C`), `SIGTERM` (system shutdown/kill), and script `EXIT`.
-2. **Re-entrance Protection:** A boolean flag `REVERTED` guarantees that cleanup code executes exactly once.
-3. **Idempotency:** If a service was already disabled before Moonlight launched, JitterKill records it as disabled and leaves it disabled upon rollback.
-
----
-
-## 8. CLI Command Reference & Quick Cheatsheet
-
-All shortcuts are registered in `~/.zshrc`:
-
-| Command | Privileges | Description |
-| :--- | :--- | :--- |
-| **`stream-install`** | `sudo` | Installs JitterKill as a persistent system `LaunchDaemon`. Auto-starts on boot and runs silently in the background. |
-| **`stream-status`** | User | Displays current service installation state, active Moonlight client PIDs, and detected streaming mode. |
-| **`stream-uninstall`** | `sudo` | Unloads and removes the background `LaunchDaemon` service. |
-| **`jitterkill`** | `sudo` | Launches JitterKill in interactive foreground mode in your current terminal. Press `Ctrl+C` to quit and restore. |
-| **`stream-mode`** | `sudo` | Alias for `jitterkill`. |
+| Command | Description |
+| :--- | :--- |
+| **`jitterkill status`** | Displays live optimization state, active network mode, trigger app, interface locks, and TCP delayed ACK. |
+| **`jitterkill apps`** | Lists monitored streaming applications, auto-activation settings, priority flags, and live PID status. |
+| **`jitterkill auto`** | Restores auto-detection mode (optimizes dynamically when game streaming apps launch). |
+| **`jitterkill on`** | Manually forces zero-latency lockdown ON immediately. |
+| **`jitterkill off`** | Manually forces zero-latency lockdown OFF and restores standard macOS defaults. |
+| **`jitterkill app`** | Launches or brings to front the native JitterKill Dashboard window. |
+| **`jitterkill debug`** | Generates a comprehensive diagnostic report exported to your Desktop. |
 
 ### Diagnostic Verification Commands
 * **Inspect Wi-Fi Interfaces:** `ifconfig awdl0 && ifconfig llw0 && ifconfig nan0`
+* **Inspect TCP Delayed ACK:** `sysctl net.inet.tcp.delayed_ack` (returns `0` during gaming, `3` in standby)
 * **Inspect Tailscale Mesh Status:** `/Applications/Tailscale.app/Contents/MacOS/Tailscale status`
-* **Test Host Gateway Latency:** `ping -c 30 -i 0.2 192.168.137.1`
-* **View JitterKill Daemon Log:** `tail -f /var/log/moonlight-optimizer.log`
+* **Inspect Helper Daemon Logs:** `tail -f /var/log/jitterkill-helper.log`

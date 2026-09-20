@@ -1,0 +1,9 @@
+{
+  "images" : [
+    { "idiom" : "universal", "scale" : "1x", "filename" : "unguard_1x.png" },
+    { "idiom" : "universal", "scale" : "2x", "filename" : "unguard_2x.png" },
+    { "idiom" : "universal", "scale" : "3x", "filename" : "unguard_3x.png" }
+  ],
+  "info" : { "author" : "xcode", "version" : 1 },
+  "properties" : { "template-rendering-intent" : "template" }
+}

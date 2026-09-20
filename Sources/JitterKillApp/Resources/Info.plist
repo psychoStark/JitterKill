@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.psychostark.jitterkill</string>
+    <key>CFBundleName</key>
+    <string>JitterKill</string>
+    <key>CFBundleDisplayName</key>
+    <string>JitterKill</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleExecutable</key>
+    <string>JitterKill</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleIconName</key>
+    <string>AppIcon</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright © 2026 psychostark. All rights reserved.</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <!-- Standard macOS application visible in Dock and Menu Bar -->
+    <key>LSUIElement</key>
+    <false/>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <!-- Network access (for TCP latency probes) -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key>
+        <true/>
+    </dict>
+    <!-- Required for Apple Script notifications -->
+    <key>NSAppleScriptEnabled</key>
+    <false/>
+    <!-- Required for displaying User Notifications -->
+    <key>NSUserNotificationsUsageDescription</key>
+    <string>JitterKill uses notifications to alert you when optimization is active or restored.</string>
+</dict>
+</plist>
